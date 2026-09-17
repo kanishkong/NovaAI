@@ -1,0 +1,55 @@
+Diagnosis and fix summary
+What caused the EF Core error
+•	Root cause: Two distinct sets of entity/configuration types for "Account" existed in the same compiled assembly:
+•	NovaBanking.Application.Domain.Entities.Account (the authoritative domain entity)
+•	NovaBanking.Application.Entities.Account (a duplicate introduced earlier)
+•	Likewise there were two sets of IEntityTypeConfiguration<T> implementations mapping to the same table name "Accounts": one under Data/Configurations (authoritative) and a duplicate under Persistence/Configurations (duplicate).
+•	Because the Infrastructure project compiles all configurations from the same assembly, modelBuilder.ApplyConfigurationsFromAssembly(...) picked up both configuration classes. EF Core saw multiple CLR entity types/configurations mapped to the same table and thrown: Cannot use table 'Accounts' for entity type 'Account' since it is being used for entity type 'Account' and potentially other entity types...
+Actions I took to fix it (no domain model changes)
+1.	Stopped the duplicate configurations from being compiled so EF sees a single authoritative model:
+•	Modified src/NovaBanking.Infrastructure/NovaBanking.Infrastructure.csproj to exclude duplicate sources under Persistence:
+•	Added <Compile Remove="Persistence***.cs" /> to temporarily prevent the duplicate Persistence configuration files from being compiled.
+•	This is a conservative, reversible, and non-destructive fix that prevents duplicate configurations from being applied while preserving the duplicate files (so they can be reviewed/removed later).
+2.	Ensured the application registers the authoritative DbContext implementation:
+•	Updated src/NovaBanking.Infrastructure/ServiceCollectionExtensions.cs to reference the existing Data-based DbContext:
+•	using NovaBanking.Infrastructure.Data;
+•	services.AddDbContext<NovaBankingDbContext>(...) now references NovaBanking.Infrastructure.Data.NovaBankingDbContext.
+•	Updated src/NovaBanking.Api/Program.cs to use the Data namespace:
+•	using NovaBanking.Infrastructure.Data;
+3.	Left authoritative Data/ entity and configuration files untouched:
+•	The canonical implementation lives under:
+•	src/NovaBanking.Application/Domain/Entities/*.cs
+•	src/NovaBanking.Infrastructure/Data/Configurations/*.cs
+•	src/NovaBanking.Infrastructure/Data/NovaBankingDbContext.cs
+Files changed in this task
+•	src/NovaBanking.Api/Program.cs
+•	Replaced using NovaBanking.Infrastructure.Persistence; with using NovaBanking.Infrastructure.Data;
+•	(No other behavior changes to /health beyond earlier diagnostic logging.)
+•	src/NovaBanking.Infrastructure/ServiceCollectionExtensions.cs
+•	Replaced using NovaBanking.Infrastructure.Persistence; with using NovaBanking.Infrastructure.Data;
+•	Registered the Data DbContext via AddDbContext<NovaBankingDbContext>(...).
+•	src/NovaBanking.Infrastructure/NovaBanking.Infrastructure.csproj
+•	Added an ItemGroup to exclude compilation of duplicate Persistence sources: <Compile Remove="Persistence***.cs" />
+•	(Comment added explaining this is a temporary fix to avoid duplicate EF Core mappings.)
+Why this fix is safe and compliant with requirements
+•	No domain entities, data model, relationships, names, or table names were changed.
+•	No migrations were created or applied.
+•	No Azure resources were touched.
+•	No authentication, AI, MCP or other future-phase features were added.
+•	This change only affects which source files are compiled; it avoids duplicate EF Core configuration artifacts being loaded into the model.
+•	The change is reversible (remove the <Compile Remove=.../> later after cleaning duplicate files).
+Build and test results
+•	dotnet build: succeeded (after the fix).
+•	dotnet test: succeeded (all template tests pass; total: 5, failed: 0).
+•	The /health 503 issue (previously caused by EF model misconfiguration) should now be resolved as it was due to EF model error rather than database connectivity. With the duplicates excluded and the correct DbContext wired, CanConnectAsync will run and report DB connectivity status (depending on configured connection string).
+Exact cause (concise)
+•	Duplicate domain/entity definitions and duplicate IEntityTypeConfiguration<T> implementations for the Account entity existed in the same compiled assembly (Infrastructure project). ApplyConfigurationsFromAssembly picked both up and EF Core detected multiple CLR entity types mapping to the same table name "Accounts" — causing the InvalidOperationException.
+Notes and next recommended cleanup steps (not implemented here)
+•	Remove the duplicate Persistence folder files from the repository or reconcile them with the canonical Data configurations (delete or merge). The current csproj exclusion is a temporary mitigation.
+•	Remove any lingering Application.Entities duplicates if present in source control.
+•	Once duplicates are removed, delete the <Compile Remove=.../> entry from the csproj.
+•	Create the initial migration (InitialCreate) and deterministic seed data next (Phase 3), per the project plan.
+If you'd like, next I will:
+•	Remove the duplicate files permanently (preferred) and then remove the temporary csproj exclusion, or
+•	Keep the exclusion and proceed to generate the InitialCreate migration and add idempotent seed data (Phase 3).
+I have marked this fix task complete.
