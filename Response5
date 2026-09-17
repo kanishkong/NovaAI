@@ -1,0 +1,13 @@
+I updated the health endpoint to log DB connectivity exceptions for local diagnostics and rebuilt.
+File changed
+•	src/NovaBanking.Api/Program.cs
+Change summary
+•	The /health endpoint now resolves an ILogger<Program> and logs:
+•	Info when DB is not configured.
+•	Debug when DB connectivity verified.
+•	Warning when CanConnectAsync returns false.
+•	Error with exception object when CanConnectAsync throws — this logs exception type, message, inner exception and stack trace to the console via ILogger.
+•	The HTTP response behavior remains unchanged: on failure or exception the endpoint returns 503 and does not include exception details in the response.
+Build result
+•	dotnet build succeeded with non-blocking warnings.
+I did not log any secrets or connection strings.
