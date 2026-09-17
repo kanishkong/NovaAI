@@ -1,0 +1,20 @@
+I inspected why POST /api/auth/pin-login returned 404 and applied the minimal fix.
+Findings
+•	AuthController is present at src/NovaBanking.Api/Controllers/AuthController.cs and correctly decorated:
+•	[ApiController]
+•	[Route("api/[controller]")]
+•	Actions use [HttpPost("pin-login")] and [HttpPost("logout")]
+•	The controller was compiled into NovaBanking.Api (present in project).
+•	Program.cs did not register controllers or map controller routes; the app used minimal endpoints only. Without AddControllers() + MapControllers(), attribute-routed controllers are not reachable, causing 404 for /api/auth/pin-login.
+•	No other route prefixes or namespace issues were found.
+Minimal fix applied
+•	Registered controllers and mapped routes:
+•	Added builder.Services.AddControllers();
+•	Added app.MapControllers();
+Files changed
+•	src/NovaBanking.Api/Program.cs (added AddControllers() and app.MapControllers()).
+Build
+•	dotnet build succeeded (with warnings); no schema or behavior changes to authentication/database code.
+Exact route that should now respond
+•	POST http://localhost:5146/api/auth/pin-login
+No authentication logic was altered beyond registering controllers and mapping routes.
