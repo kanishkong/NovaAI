@@ -1,0 +1,111 @@
+I continued Phase 3 work and made the migration/seed and test updates you requested. Summary of actions and results:
+What I inspected
+•	Authoritative entities: src/NovaBanking.Application/Domain/Entities/
+•	Authoritative DbContext: src/NovaBanking.Infrastructure/Data/NovaBankingDbContext.cs
+•	Authoritative configurations: src/NovaBanking.Infrastructure/Data/Configurations/
+•	Existing migration file: src/NovaBanking.Infrastructure/Data/Migrations/20260917_InitialCreate.cs
+•	Model snapshot: src/NovaBanking.Infrastructure/Data/Migrations/NovaBankingDbContextModelSnapshot.cs
+•	Existing seed helper: src/NovaBanking.Infrastructure/Data/Seed/DbSeeder.cs
+•	Program health endpoint: src/NovaBanking.Api/Program.cs
+•	Infrastructure tests: tests/NovaBanking.Infrastructure.Tests/InfrastructureSeedTests.cs
+Decisions made
+•	A valid InitialCreate migration already exists and belongs to the authoritative DbContext (file: src/NovaBanking.Infrastructure/Data/Migrations/20260917_InitialCreate.cs). I reused it — no new migration created.
+•	Replaced EnsureCreated-based seeding with a migration-friendly, idempotent seeder and added an opt-in --seed application startup mode to run the seed explicitly in development. Removed the explicit diagnostic DB open from /health.
+Code changes (locations)
+•	Seed implementation updated: src/NovaBanking.Infrastructure/Data/Seed/DbSeeder.cs
+•	Removed Database.EnsureCreatedAsync() usage.
+•	Implemented idempotent checks before inserting records.
+•	Deterministic seedDate used for repeatability.
+•	Uses PasswordHasher<CustomerCredential> to hash demo PINs (1111,2222,3333) — never stored in plaintext.
+•	Idempotent insertion: checks on CustomerNumber, AccountNumber, ReferenceNumber, LoanNumber, MaskedCardNumber.
+•	Seeds: Customers, CustomerCredentials (hashed), Accounts, Transactions, Loans, CreditCards. No CustomerSessions are seeded.
+•	Program changes: src/NovaBanking.Api/Program.cs
+•	Removed the explicit diagnostic connection.OpenAsync() logic from /health endpoint; /health now only calls CanConnectAsync and logs safely.
+•	Added a one-time opt-in seeding mode: run the app with --seed to execute the idempotent DbSeeder.SeedAsync against the configured database. In seed mode the app logs and exits after seeding (does not start the web server). This avoids automatic seeding during normal startup.
+•	Tests updated: tests/NovaBanking.Infrastructure.Tests/InfrastructureSeedTests.cs
+•	Adjusted to call DbSeeder.SeedAsync twice against an in-memory DB to verify idempotency.
+•	Asserts:
+•	Exactly 3 customers present (CUST0001..CUST0003).
+•	Exactly 3 CustomerCredentials.
+•	Credential PinHash fields are present and do not contain the plaintext demo PINs.
+•	Accounts/Loans/CreditCards reference valid CustomerIds.
+•	Business identifiers (AccountNumber, LoanNumber, MaskedCardNumber) are unique (no duplicates).
+Validation: build & tests
+•	dotnet build executed successfully for the solution in the workspace. Build summary: succeeded with warnings.
+•	dotnet test --no-build ran and all tests passed: Test summary: total: 5, failed: 0, succeeded: 5, skipped: 0.
+Phased requirements mapping
+•	Requirement 1: InitialCreate inspected and present.
+•	Requirement 2: Reused existing InitialCreate migration; did not create a duplicate.
+•	Requirement 3: (n/a) — migration already existed.
+•	Requirement 4: Existing InitialCreate migration creates tables: Customers, CustomerCredentials, CustomerSessions, Accounts, Transactions, Loans, CreditCards (verified in migration file).
+•	Requirement 5: Verified keys, FKs, indexes, unique constraints, required/nullable fields, decimal precisions, dates, and delete behaviors by comparing migration and snapshot against configurations under Data/Configurations.
+•	Requirement 6: Added/updated idempotent seed at src/NovaBanking.Infrastructure/Data/Seed/DbSeeder.cs.
+•	Requirements 7–15: Seed uses synthetic data only, deterministic identifiers, masked card numbers, hashed PINs, no credentials stored in plaintext, no secrets hardcoded.
+•	Requirement 16–17: Removed EnsureCreated usage, avoided automatic Database.Migrate; seeding is opt-in via --seed. Removed previous EnsureCreated in DbSeeder.
+•	Requirement 18: Removed explicit diagnostic DB open from Program.cs; /health retained but simplified.
+•	Requirement 19: Tests updated to verify idempotency, 3 customers, hashed credentials, ownership relationships, uniqueness.
+•	Requirements 20–21: Build succeeded; tests succeeded.
+•	Requirement 22–23: No authentication, endpoints, cloud/Azure modifications, or automatic migration application were added.
+Exact files changed
+•	Modified: src/NovaBanking.Infrastructure/Data/Seed/DbSeeder.cs
+•	Modified: src/NovaBanking.Api/Program.cs
+•	Modified: tests/NovaBanking.Infrastructure.Tests/InfrastructureSeedTests.cs
+Existing migration (reused)
+•	src/NovaBanking.Infrastructure/Data/Migrations/20260917_InitialCreate.cs
+•	This migration creates the required seven tables with expected columns, constraints, indexes and precision settings matching the configuration classes.
+Entities/tables included (from migration/snapshot/config)
+•	Customers
+•	CustomerCredentials
+•	CustomerSessions
+•	Accounts
+•	Transactions
+•	Loans
+•	CreditCards
+Demo customer records seeded
+•	CUST0001 (Alex Demo)
+•	CUST0002 (Beth Example)
+•	CUST0003 (Carl Sample)
+PINs and hashing
+•	Demo PINs: 1111, 2222, 3333
+•	PINs are hashed using Microsoft.AspNetCore.Identity.PasswordHasher<CustomerCredential> before persisting. No plaintext PINs are stored.
+Idempotency enforcement
+•	Seed checks for existence by stable business identifiers:
+•	Customers checked by CustomerNumber (CUST0001..CUST0003).
+•	Accounts checked by AccountNumber.
+•	Transactions checked by ReferenceNumber.
+•	Loans checked by LoanNumber.
+•	Credit cards checked by MaskedCardNumber.
+•	DbSeeder returns early if demo customers already exist. In tests, seeding twice yields the same final state.
+Tests added/updated
+•	tests/NovaBanking.Infrastructure.Tests/InfrastructureSeedTests.cs
+•	Seeds twice to ensure idempotency.
+•	Asserts 3 customers, 3 credential records, hashed PINs, valid ownership references, unique business identifiers.
+Build result
+•	dotnet build: succeeded with warnings (noted package resolution warnings for InMemory pre-release package; build succeeded).
+Test result
+•	dotnet test --no-build: all tests passed (5 succeeded).
+Exact commands for you
+•	To apply the migration to your configured Azure SQL database (explicit command you should run locally; do NOT run automatically from startup):
+•	cd C:\Training\NovaAI\src\NovaBanking.Infrastructure
+•	dotnet ef database update --project ./ --startup-project ../NovaBanking.Api
+Notes:
+•	Ensure your Api project configuration (appsettings / user secrets) contains the correct ConnectionStrings:NovaBanking pointing to your Azure SQL database before running the command.
+•	The --startup-project points to the project that has the configured DI/Configuration (NovaBanking.Api).
+•	To run the idempotent seed against your configured Azure SQL database (opt-in):
+•	From the solution root run:
+•	dotnet run --project src/NovaBanking.Api -- --seed
+•	This runs the Api in seed mode which will execute DbSeeder.SeedAsync against the configured NovaBankingDbContext and then exit.
+Notes, caveats, and recommendations
+•	The InitialCreate migration already existed and matched the authoritative model snapshot. No migration duplication was performed.
+•	The seeder intentionally does not call context.Database.Migrate() or EnsureCreated(). Apply migrations explicitly as shown above.
+•	The --seed startup mode runs seeding once and exits; do not run it against production or shared databases unless intended and approved.
+•	The in-memory tests use Microsoft.EntityFrameworkCore.InMemory pre-release packages; review package versions if you plan to stabilize to GA releases.
+•	I removed the explicit diagnostic connection.OpenAsync from /health to avoid unintended side effects and potential secret/logging risks. /health now does a safe CanConnectAsync and logs a simple message.
+If you want, I can:
+•	Run the ef migrations add InitialCreate step if you prefer to create a new migration instead of reusing the existing one (not recommended here since InitialCreate already exists).
+•	Provide a small README section under Infrastructure describing migration and seed commands to run in development.
+•	Re-run tests or build with a specific configuration.
+What I will do next if you ask me to continue:
+•	Add a README or documentation snippet with the exact steps to migrate and seed in development.
+•	Optionally add a small script/powershell file to run the update + seed sequence safely (explicit, not automatic).
+If you want me to proceed with any of the above, tell me which step.
