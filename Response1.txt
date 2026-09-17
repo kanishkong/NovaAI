@@ -1,0 +1,238 @@
+Summary: I inspected the workspace and the full project specification you pointed to. Below is an implementation assessment, architecture recommendation, project/folder layout, dependency graph, required NuGet/Azure pieces, testing approach, ambiguities, and the exact next task to start work. I did NOT modify the repository.
+A. Current repository assessment
+1.	Files and folders currently present
+•	Nova_Case_Study_COMPLETE.md (the complete case study/specification)
+•	No other source files, projects, or solution files detected in the workspace root.
+2.	Does a .NET solution already exist?
+•	No .sln file or Visual Studio solution detected.
+3.	Any ASP.NET Core projects present?
+•	No. No csproj or code files were found.
+4.	Existing code that should be preserved
+•	None found. Only the case study markdown exists and must remain the authoritative specification.
+B. Proposed architecture (high-level)
+•	Core principles (from spec): strict separation between RAG/public knowledge (RAG + Azure AI Search + Azure OpenAI) and protected customer data (MCP tools → business services → EF Core → SQL Server). Semantic Kernel performs orchestration and must not be an auth authority. Audit logging, masking and strict server-side ownership predicates are mandatory.
+•	Layering:
+•	NovaBanking.Api — ASP.NET Core Web API: controllers, request validation, authentication/session middleware, and wiring of services and the Semantic Kernel orchestrator.
+•	NovaBanking.Application — Business logic, use-case services, interfaces (MCP tool contracts and orchestrator logic), DTOs, domain service interfaces, Semantic Kernel orchestration code (or a light orchestration/adaptor layer that delegates into Kernel).
+•	NovaBanking.Infrastructure — EF Core DbContext, repositories/data access implementations, migrations, Azure service clients (Search, Blob storage), Key Vault and secrets retrieval, concrete audit logging sink.
+•	NovaBanking.McpServer — Separate host implementing the MCP tool server (fixed allowlist). This project implements the tool endpoints that the Semantic Kernel/Api can call (or, alternatively, be wired internally if hosted in same process, but treat as separate deployable per spec).
+•	Additional folders (repository-level): knowledge/ (RAG documents), database/ (scripts, migrations), tests/, docs/, README.md.
+C. Exact project/folder structure to create
+•	src/
+•	NovaBanking.Api/               (ASP.NET Core Web API)
+•	NovaBanking.Application/       (business logic, interfaces, orchestration)
+•	NovaBanking.Infrastructure/    (EF Core, data access, Azure client implementations)
+•	NovaBanking.McpServer/         (MCP tool host: implements allowlisted tool contract)
+•	(optional) NovaBanking.Domain/ (if you want a dedicated domain project for entities — acceptable to keep domain models inside Application)
+•	knowledge/                        (place demo PDFs / ingestion source files)
+•	database/                         (EF migrations, seed data scripts)
+•	tests/
+•	NovaBanking.Api.Tests
+•	NovaBanking.Application.Tests
+•	NovaBanking.Infrastructure.Tests
+•	NovaBanking.McpServer.Tests
+•	docs/
+•	README.md
+•	.editorconfig, .gitignore
+D. Dependency relationships (precise, per requested projects)
+•	NovaBanking.Application
+•	Contains business interfaces, DTOs, domain logic and orchestration primitives. It should NOT depend on Infrastructure.
+•	NovaBanking.Infrastructure
+•	Implements persistence and external service adapters (EF Core DbContext, repository implementations, Azure SDK clients).
+•	Depends on NovaBanking.Application (to implement Application interfaces) OR Application defines only interfaces and DTOs and Infrastructure references Application to implement them.
+•	NovaBanking.Api
+•	Depends on NovaBanking.Application and NovaBanking.Infrastructure for DI registration (or a composition root that references Infrastructure to register concrete implementations).
+•	NovaBanking.McpServer
+•	Depends on NovaBanking.Application (to call business logic / data access via interfaces) and NovaBanking.Infrastructure (for DI registration of concrete implementations). Graph summary (edges point from consumer → dependency):
+•	NovaBanking.Api → NovaBanking.Application
+•	NovaBanking.Api → NovaBanking.Infrastructure (composition root for DI)
+•	NovaBanking.McpServer → NovaBanking.Application
+•	NovaBanking.McpServer → NovaBanking.Infrastructure
+•	NovaBanking.Infrastructure → NovaBanking.Application (only if Application defines interfaces that Infrastructure implements) — prefer: Application defines interfaces/DTOs, Infrastructure implements them and thus references Application.
+E. NuGet packages that will eventually be required (grouped by project)
+•	Common / all projects
+•	Microsoft.Extensions.Hosting
+•	Microsoft.Extensions.Configuration
+•	Serilog.AspNetCore (or Microsoft.Extensions.Logging + Serilog sinks)
+•	NovaBanking.Api
+•	Microsoft.AspNetCore.App (implicit framework)
+•	Swashbuckle.AspNetCore (Swagger)
+•	Microsoft.AspNetCore.Authentication.Cookies or Microsoft.AspNetCore.Authentication.JwtBearer (choose cookie sessions or JWT)
+•	Microsoft.AspNetCore.Session (if server-side cookie session)
+•	Microsoft.Extensions.Caching.Memory / Distributed
+•	Microsoft.AspNetCore.RateLimiting (or middleware for throttling)
+•	Microsoft.AspNetCore.Mvc.NewtonsoftJson (if needed)
+•	Microsoft.Identity.Client / Microsoft.Identity.Web (only if integrating Azure AD later; optional)
+•	NovaBanking.Application
+•	Microsoft.SemanticKernel
+•	Microsoft.SemanticKernel.AI.OpenAI (or the extension package for Azure OpenAI)
+•	Azure.AI.OpenAI (for direct Azure OpenAI usage if needed)
+•	Azure.Search.Documents (Azure Cognitive Search client)
+•	Azure.Core
+•	NovaBanking.Infrastructure
+•	Microsoft.EntityFrameworkCore
+•	Microsoft.EntityFrameworkCore.SqlServer
+•	Microsoft.EntityFrameworkCore.Design
+•	Microsoft.EntityFrameworkCore.Tools (dev only)
+•	Microsoft.Data.SqlClient
+•	Azure.Identity (for Managed Identity / Key Vault)
+•	Azure.Security.KeyVault.Secrets
+•	Azure.Storage.Blobs (for document ingestion/storage)
+•	Azure.Search.Documents
+•	Azure.AI.OpenAI
+•	NovaBanking.McpServer
+•	Microsoft.AspNetCore.App
+•	Microsoft.AspNetCore.Authentication (if it needs to authenticate inbound calls)
+•	Microsoft.SemanticKernel (only if the MCP service needs to do small AI tasks; otherwise it exposes tool endpoints)
+•	Testing projects
+•	xUnit / NUnit
+•	FluentAssertions
+•	Moq or NSubstitute
+•	Microsoft.AspNetCore.Mvc.Testing (for integration tests)
+•	Respawn (DB reset between integration tests) or EF Core InMemory provider for unit-level tests
+•	Microsoft.EntityFrameworkCore.InMemory (unit tests)
+•	Crypto / PIN hashing
+•	Use either Microsoft.AspNetCore.Identity (PasswordHasher<T>) or a specialized package:
+•	BCrypt.Net-Next OR Konscious.Security.Cryptography.Argon2 (Argon2) — document choice and justify.
+•	Observability
+•	Serilog, Serilog.Sinks.Console, Serilog.Sinks.ApplicationInsights (optionally)
+•	Microsoft.ApplicationInsights.AspNetCore (optional)
+F. Azure services required and usage
+•	Azure SQL Database (host SQL Server schema described in spec) — primary data store for Customers, Accounts, Sessions, etc.
+•	Azure Cognitive Search (Azure AI Search) — vector search and document retrieval for RAG index.
+•	Azure OpenAI (or Azure AI Foundry if required by your organization) — model for generation and embeddings (used with Semantic Kernel).
+•	Azure Blob Storage — storage for the approved RAG source documents (PDFs) and for any ingestion artifacts.
+•	Azure Key Vault — store OpenAI keys, Cognitive Search admin keys, SQL connection strings, and other secrets.
+•	Azure App Service or Azure Container Instances / Azure Kubernetes Service — host NovaBanking.Api and NovaBanking.McpServer in production/demo.
+•	Azure Application Insights — telemetry and diagnostics.
+•	(Optional) Azure Storage Queues / Service Bus — for asynchronous ingestion tasks or long-running work (document ingestion pipeline).
+•	Managed Identity — for services to securely access Key Vault and Storage without hard-coded secrets.
+G. Azure configuration values the application will need
+•	ConnectionStrings__NovaBanking (SQL connection string — from Key Vault or environment)
+•	AzureSearch__Endpoint and AzureSearch__AdminKey (or use Azure AD auth)
+•	AzureOpenAI__Endpoint / AzureOpenAI__DeploymentName / AzureOpenAI__ApiKey (or Key Vault reference)
+•	KeyVault__Uri (if using Key Vault)
+•	BlobStorage__ConnectionString or BlobStorage__Container and use Managed Identity
+•	ApplicationInsights__InstrumentationKey
+•	MCP__Allowlist (configuration for the fixed MCP tool allowlist)
+•	Auth__SessionCookieName, Auth__SessionTimeoutMinutes, Auth__LockoutThreshold, Auth__LockoutDurationMinutes
+•	Logging__Level and Serilog sink configs
+•	SemanticKernel__PromptTemplates__Path (or stored in config)
+•	RAG__IndexName, RAG__EmbeddingModel (model to produce embeddings)
+•	Feature flags as needed (RAG enabled/disabled, Azure services toggles)
+•	Environment (Development/Production)
+H. Database entities and relationships (as specified)
+•	Customers (CustomerId PK) → has CustomerCredentials, CustomerSessions, Accounts, Loans, CreditCards.
+•	CustomerCredentials (CredentialId PK, CustomerId FK)
+•	CustomerSessions (SessionId PK GUID, CustomerId FK)
+•	Accounts (AccountId PK, CustomerId FK) → Transactions (TransactionId PK, AccountId FK)
+•	Transactions (TransactionId PK bigint)
+•	Loans (LoanId PK, CustomerId FK)
+•	CreditCards (CreditCardId PK, CustomerId FK)
+•	Ownership rules: every protected query must enforce authenticated CustomerId ownership at query time (EF Core filters / WHERE clauses).
+I. Authentication architecture
+•	Authentication method: PIN-based demo login.
+•	Endpoint: POST /api/auth/pin-login
+•	Input: CustomerId and 4–6 digit PIN (validate length/format).
+•	Verify PIN using a modern password-hashing algorithm with unique salt (Argon2 or BCrypt or ASP.NET Core PasswordHasher).
+•	Store only salted one-way hash in CustomerCredentials.PinHash. Never log PIN or hash in answers/prompts.
+•	On success:
+•	Create a session record in CustomerSessions with a GUID SessionId and store a token hash (hash of session token). Issue the session token to client via secure HttpOnly, SameSite cookie OR return token in response (prefer cookie per spec).
+•	Session expiry must be short-lived; support logout by marking RevokedOn.
+•	On failure:
+•	Increment FailedAttemptCount and, when threshold exceeded, set LockedUntil.
+•	Provide safe error messages per spec.
+•	Authorization:
+•	On protected API calls and MCP tool invocations, server-side middleware must retrieve session and authenticated CustomerId from server-trusted session state.
+•	Never accept CustomerId from the incoming chat content as an authorization source.
+•	Authorization must enforce ownership predicates in the data access layer.
+J. MCP architecture
+•	NovaBanking.McpServer implements the fixed tool contract:
+•	SearchBankingKnowledge(question) — public, routes to RAG / Azure Search.
+•	GetCustomerProfile() — authenticated.
+•	GetAccountSummary(), GetAccountBalance(accountId), GetRecentTransactions(accountId, count), GetLoanSummary(loanId), GetCreditCardSummary(cardId) — all authenticated.
+•	Tool allowlist strictly enforced; Semantic Kernel must only be able to call that allowlist (tool invocation must be restricted in code/config).
+•	MCP server accepts server-resolved customer context (not a model-supplied one). Kernel asks the API server to invoke MCP tools using the server's identity and must not pass a model-supplied CustomerId.
+K. RAG architecture
+•	Document sources stored in knowledge/ and mirrored to Blob Storage for ingestion.
+•	Ingestion pipeline:
+•	Text extraction from PDFs → cleaning → chunking (configurable chunk size/overlap) → metadata assignment (DocumentId, Title, Category, Version, EffectiveDate, PageNumber, SourceUrl) → embedding generation (OpenAI embedding model) → index into Azure Cognitive Search / vector store with metadata and embedding vector.
+•	Query-time:
+•	Azure Search returns top matching chunks with metadata.
+•	Compose a grounded prompt including retrieved citations (title + metadata) and pass to Azure OpenAI via Semantic Kernel.
+•	If no relevant content, return the explicit “I could not find this information…” message.
+•	Must include prompt-injection defenses and treat retrieved content as untrusted.
+L. Semantic Kernel orchestration architecture
+•	Kernel acts as the orchestrator for incoming /api/ai/ask requests:
+1.	Classify the question: public banking knowledge vs protected vs unsupported vs unsafe (pre-check rules and lightweight classifier).
+2.	If public → call RAG pipeline (SearchBankingKnowledge).
+3.	If protected → ensure the session is authenticated, inject authenticated CustomerId into the tool call context, and call appropriate MCP tool via allowlisted tool interface.
+4.	Kernel must not be used to perform authentication or decide the CustomerId.
+5.	Kernel must be configured with strict tool allowlist and must inject only minimal information into prompts (no PINs, no raw tokens, masked identifiers).
+•	Kernel components:
+•	Prompt templates, grounding templates, safety filters, and a tool-calling adapter that enforces server-side security.
+M. The RAG + Semantic Kernel + MCP interaction (end-to-end)
+•	/api/ai/ask receives user text.
+•	Server validates request, optionally checks authentication state.
+•	Server passes the text to Kernel orchestrator component which:
+•	classifies intent,
+•	routes to RAG or MCP,
+•	constructs grounded prompt with retrieved chunks or uses MCP tool outputs,
+•	calls Azure OpenAI to generate the final answer,
+•	post-processes to mask any sensitive identifiers and adds citations,
+•	logs audit metadata (not sensitive content) per audit contract.
+N. Testing strategy
+•	Unit tests: xUnit + Moq/ NSubstitute + FluentAssertions for business logic, auth logic (hash verification), ownership filters, prompt-building utilities.
+•	Integration tests:
+•	EF Core tests against a local SQL Server (or test container) plus migrations validation. Use Respawn to reset DB or use Testcontainers.
+•	API integration tests with Microsoft.AspNetCore.Mvc.Testing to exercise controllers and middleware (auth/session flows).
+•	RAG integration tests: mock Azure Search + OpenAI responses or use a local test harness. Validate no-result and citation behavior.
+•	Security tests:
+•	Tests for lockout, failed-attempt counters, session expiration, session revocation.
+•	Tests ensuring model cannot override CustomerId: e.g., attempt to pass CustomerId in prompt/body and validate server ignores it.
+•	End-to-end smoke tests for protected and public flows.
+•	CI pipeline will run tests and build.
+O. Ambiguities / implementation decisions needing confirmation
+1.	Session token style: server-side cookie-backed sessions vs JWT bearer tokens. Spec requires short-lived sessions and server-side revocation — server-side sessions with token hashed in DB are recommended; confirm preference.
+2.	PIN hashing algorithm: spec requires “modern password-hashing with unique salt” — choice between ASP.NET Core PasswordHasher (PBKDF2), BCrypt, or Argon2. Recommend Argon2 for strongest security, but Argon2 requires an extra library.
+3.	Semantic Kernel placement: keep orchestration code in Application or in a dedicated AI project? Spec lists only Application; confirm if a separate NovaBanking.AI project is preferred.
+4.	Hosting of MCP: separate process (McpServer) vs in-process endpoint on Api — spec prescribes NovaBanking.McpServer project; confirm separate service deployment is desired.
+5.	Azure OpenAI vs “Azure AI Foundry” — both mentioned in case study. Confirm which Azure-managed model endpoint will be used in environment.
+6.	Use of Managed Identity vs KeyVault secrets for local vs cloud. Plan to support both via config.
+7.	Exact OpenAI model(s) and deployment names for generation and embeddings (decide later during integration).
+P. Implementation phases (per spec order, recommended)
+1.	Create solution + project scaffolding (src projects + tests + docs).
+2.	Implement DB entities and migrations (Infrastructure) and seed synthetic data.
+3.	Implement authentication/session management (Api + Application + Infrastructure).
+4.	Implement Account/Loan/CreditCard services in Application with Ownership predicates and repository implementations in Infrastructure.
+5.	Implement NovaBanking.McpServer exposing the fixed tool contract (authenticated endpoints).
+6.	Implement RAG ingestion pipeline and indexing to Azure Cognitive Search (local/in-memory version for dev).
+7.	Integrate Semantic Kernel orchestration with RAG and MCP tool calls.
+8.	Integrate Azure OpenAI (grounding + embeddings) and Azure Search live tests.
+9.	Security hardening (key vault, secrets, rate limiting, prompt-injection mitigations).
+10.	Add audit logging and ensure logs redact sensitive values.
+11.	Implement tests (unit/integration/e2e) and CI.
+12.	Documentation and optional simple UI for demo.
+Q. Exact next implementation task (single atomic step)
+•	Create and commit the solution skeleton (no business code) that composes the planned projects and folders:
+•	Create a Visual Studio solution file (.sln) at repository root.
+•	Create the following projects under src/ with minimal Program.cs and csproj files:
+•	NovaBanking.Api (ASP.NET Core Web API template)
+•	NovaBanking.Application (class library)
+•	NovaBanking.Infrastructure (class library)
+•	NovaBanking.McpServer (ASP.NET Core Web API or Worker depending on deployment; use ASP.NET Core Web API to expose HTTP tool endpoints)
+•	Create test projects under tests/ for the primary projects (xUnit).
+•	Add README.md and docs/ placeholder.
+•	Do not add any implementation logic, secrets, or placeholder security bypasses — only scaffolding and project references to reflect the dependency graph described above.
+•	Ensure the solution builds (empty projects compile) and that no secrets are added.
+Rationale for this next task
+•	The spec mandates incremental development starting with solution structure. Scaffolding the solution is required before database, auth and service implementations; it is small, atomic, and safe.
+Deliverables when you ask me to proceed with the next task
+•	I will scaffold the solution and projects exactly as above, add csproj references following the dependency graph, and ensure the solution builds. I will then provide the commit summary and the next implementation step (database schema/migrations).
+Questions to resolve before code-level implementation
+1.	Session token strategy: cookie-based server sessions or JWT bearer tokens?
+2.	PIN hashing algorithm preference (Argon2 recommended; confirm if PasswordHasher or BCrypt is preferred).
+3.	Confirm whether NovaBanking.Domain should be a separate project or embedded within Application.
+4.	Confirm whether MCP server should be deployed as a separate App Service (default) or co-hosted.
+If you confirm those decisions (or tell me to proceed with defaults I recommended: server-side sessions via cookies + Argon2 + Domain inside Application + separate McpServer host), I will scaffold the solution as the immediate next step and then continue with the ordered phases.
+End of assessment.
