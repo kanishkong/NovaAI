@@ -1,0 +1,84 @@
+Work performed — summary
+•	Implemented the local database/domain layer wiring and entity model definitions (no auth, no AI, no Azure resources).
+•	Registered the DbContext via an Infrastructure extension so EF packages remain in Infrastructure and Api remains the composition root.
+•	Added a safe /health endpoint that performs a lightweight DB connectivity check when a connection string is configured; it returns a non-sensitive response and never prints connection strings or secrets.
+•	Built and ran tests (template tests) — build and tests succeed.
+What I changed / added
+•	Application (domain entities)
+•	src/NovaBanking.Application/Entities/Customer.cs
+•	src/NovaBanking.Application/Entities/CustomerCredential.cs
+•	src/NovaBanking.Application/Entities/CustomerSession.cs
+•	src/NovaBanking.Application/Entities/Account.cs
+•	src/NovaBanking.Application/Entities/Transaction.cs
+•	src/NovaBanking.Application/Entities/Loan.cs
+•	src/NovaBanking.Application/Entities/CreditCard.cs
+•	Infrastructure (persistence & DI)
+•	src/NovaBanking.Infrastructure/Persistence/NovaBankingDbContext.cs
+•	src/NovaBanking.Infrastructure/Persistence/Configurations/CustomerConfiguration.cs
+•	src/NovaBanking.Infrastructure/Persistence/Configurations/CustomerCredentialConfiguration.cs
+•	src/NovaBanking.Infrastructure/Persistence/Configurations/CustomerSessionConfiguration.cs
+•	src/NovaBanking.Infrastructure/Persistence/Configurations/AccountConfiguration.cs
+•	src/NovaBanking.Infrastructure/Persistence/Configurations/TransactionConfiguration.cs
+•	src/NovaBanking.Infrastructure/Persistence/Configurations/LoanConfiguration.cs
+•	src/NovaBanking.Infrastructure/Persistence/Configurations/CreditCardConfiguration.cs
+•	src/NovaBanking.Infrastructure/ServiceCollectionExtensions.cs
+•	API
+•	src/NovaBanking.Api/Program.cs (removed template WeatherForecast sample; registered Infrastructure DB; added /health check)
+•	Docs / repo
+•	README.md (already present)
+•	docs/README.md (placeholder)
+NuGet packages added
+•	Added to NovaBanking.Infrastructure:
+•	Microsoft.EntityFrameworkCore (8.0.15)
+•	Microsoft.EntityFrameworkCore.SqlServer (8.0.15)
+•	Microsoft.EntityFrameworkCore.Design (8.0.15)
+How DbContext is registered (implementation details)
+•	Infrastructure exposes an extension method:
+•	IServiceCollection AddNovaBankingInfrastructure(this IServiceCollection services, IConfiguration configuration)
+•	That method reads the connection string from configuration via configuration.GetConnectionString("NovaBanking").
+•	If a non-empty connection string exists, the method calls services.AddDbContext<NovaBankingDbContext>(options => options.UseSqlServer(connectionString));
+•	NovaBanking.Api calls builder.Services.AddNovaBankingInfrastructure(builder.Configuration) during startup (Program.cs).
+How configuration is loaded
+•	Connection string is read from standard ASP.NET Core configuration:
+•	Configuration key: ConnectionStrings:NovaBanking
+•	The connection string is expected to be provided via user secrets / environment variables / other configuration providers you have configured locally. No secrets were added to source code.
+Safe database connectivity check
+•	/health endpoint (Api) behavior:
+•	Creates a scope, requests NovaBankingDbContext from DI.
+•	If DbContext is not registered (no connection string), returns status = "Healthy", database = "NotConfigured".
+•	If DbContext is present, runs await db.Database.CanConnectAsync() and returns:
+•	200 OK { status = "Healthy", database = "Connected" } if true
+•	503 (Service Unavailable) if false or on exception
+•	Exceptions are caught and not exposed; no sensitive details are returned.
+Build and test results
+•	dotnet build: succeeded.
+•	dotnet test: succeeded (template tests; 5 tests discovered/run from template projects).
+•	Non-blocking NuGet warnings were logged during package restore (transitive package advisories/warnings). No blocking build errors.
+Remaining database initialization items / notes
+•	No migrations were created in this change (per your later instruction to only wire connectivity). Initial EF migration (InitialCreate) has NOT been generated yet.
+•	No seed data was added in this step.
+•	NovaBankingDbContext is registered but will only attempt a connection at runtime if ConnectionStrings:NovaBanking is set in configuration (user secrets/environment).
+•	The health check is safe and will not expose secrets, but if you have a connection string that points to an unavailable DB the /health endpoint will return 503; that is expected.
+•	No EnsureCreated(), EnsureDeleted(), DropDatabase, or automatic migration application code was added.
+Assumptions / decisions made
+•	Date fields: I used DateTime? for NextDueDate and PaymentDueDate to avoid requiring custom DateOnly conversions at this stage and to keep EF mapping simple and compatible across SDKs.
+•	Delete behavior: for all FK relationships I configured DeleteBehavior.Restrict to avoid accidental cascade deletion of important customer financial data.
+•	EF package versions: used latest stable patches available from NuGet when this environment ran (8.0.15). You can change to a specific LTS-targeted version if needed.
+Exact files changed (concise list)
+•	src/NovaBanking.Application/Entities/*.cs (7 files)
+•	src/NovaBanking.Infrastructure/Persistence/NovaBankingDbContext.cs
+•	src/NovaBanking.Infrastructure/Persistence/Configurations/*.cs (8 config files)
+•	src/NovaBanking.Infrastructure/ServiceCollectionExtensions.cs
+•	src/NovaBanking.Api/Program.cs
+•	docs/README.md
+•	README.md (existing; no secret changes)
+Warnings observed
+•	NuGet restore produced non-blocking warnings about transitive package advisories (vulnerability advisories surfaced by NuGet). These are informational; none caused build failure. We will address package selection/upgrades during dependency hardening.
+Exact next phase (recommended)
+•	Phase: Create EF Core migration artifacts and deterministic, idempotent synthetic seed data as specified in the case study.
+•	Add seed implementation (Infrastructure) that is safe and idempotent for development.
+•	Create the initial migration named InitialCreate and place it in the Infrastructure Migrations folder.
+•	Add tests that verify the schema and seed behavior (no plaintext PIN persisted).
+•	I will not run or apply migrations to any remote/production database unless you explicitly instruct me to.
+If you want me to proceed now with: A) generating the InitialCreate migration and adding deterministic seed data (using ASP.NET PasswordHasher<T> for PIN hashing), or B) preparing seed data plus unit/integration tests that validate seeding and ownership constraints,
+reply which you prefer and I will implement the chosen next step.
