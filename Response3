@@ -1,0 +1,73 @@
+Summary of what I implemented (database / domain layer only, Phase 2):
+•	Entities created (src/NovaBanking.Application/Domain/Entities):
+•	Customer
+•	CustomerCredential
+•	CustomerSession
+•	Account
+•	Transaction
+•	Loan
+•	CreditCard
+•	Relationships implemented (via EF Core configurations in src/NovaBanking.Infrastructure/Data/Configurations):
+•	Customer 1 -> 0..1 CustomerCredential
+•	Customer 1 -> many CustomerSessions
+•	Customer 1 -> many Accounts
+•	Customer 1 -> many Loans
+•	Customer 1 -> many CreditCards
+•	Account 1 -> many Transactions
+•	All foreign keys explicitly configured and appropriate navigation properties added.
+•	Delete behavior chosen to avoid wide cascade deletes (Restrict for critical customer-owned financial records, Cascade for sessions and transactions where safe).
+•	EF Core packages added (to NovaBanking.Infrastructure):
+•	Microsoft.EntityFrameworkCore
+•	Microsoft.EntityFrameworkCore.SqlServer
+•	Microsoft.EntityFrameworkCore.Design
+•	Microsoft.AspNetCore.Identity (for PasswordHasher<T> used during seeding)
+•	DbContext:
+•	NovaBankingDbContext implemented at src/NovaBanking.Infrastructure/Data/NovaBankingDbContext.cs
+•	DbSets for all entities and ApplyConfigurationsFromAssembly used to register configurations.
+•	Configuration approach:
+•	Fluent API via IEntityTypeConfiguration<T> classes for every entity in src/NovaBanking.Infrastructure/Data/Configurations.
+•	Explicit configuration of table names, PKs, FKs, string lengths, decimal precision, required/optional fields, indexes and unique constraints (e.g., CustomerNumber, AccountNumber, LoanNumber uniqueness).
+•	SessionId unique index configured.
+•	Migration:
+•	Initial EF migration artifact created: InitialCreate in src/NovaBanking.Infrastructure/Data/Migrations (InitialCreate.cs and ModelSnapshot). (Migration code creates full schema matching specification.) Name/location: InitialCreate under NovaBanking.Infrastructure/Data/Migrations.
+•	Seeding design & implementation:
+•	Deterministic synthetic seed performed in code (src/NovaBanking.Infrastructure/Data/Seed/DbSeeder.cs).
+•	Seeder is idempotent (checks for existing customers) and safe to run multiple times; uses EnsureCreated (non-destructive).
+•	Demo PINs are hashed transiently at seed time using ASP.NET Core PasswordHasher<T> (PasswordHasher<CustomerCredential>) — raw PINs exist only transiently in local variables and are not persisted, logged, or written to source files.
+•	Seeder populates:
+•	3 synthetic customers (CustomerNumber: CUST0001, CUST0002, CUST0003)
+•	1 credential per customer (hashed PINs for demo PINs 1111, 2222, 3333 — only hashes stored)
+•	Multiple accounts (3 accounts)
+•	Multiple transactions (3 transactions)
+•	Multiple loans (3 loans)
+•	Multiple credit cards (2 cards)
+•	Masked card numbers only are stored (e.g., XXXX-XXXX-XXXX-1234).
+•	No plaintext PINs or raw card numbers are persisted.
+•	Tests added (tests/NovaBanking.Infrastructure.Tests):
+•	InfrastructureSeedTests verifying:
+•	DbContext can be constructed with InMemory provider
+•	Seeding runs and is idempotent
+•	Number of customers and credentials exist (3 customers, 3 credentials)
+•	No plaintext PIN persisted (assert hashed strings do not contain raw PINs)
+•	Basic navigation/relationship presence
+•	Template cleanup:
+•	Removed WeatherForecast sample endpoints from API and MCP server and replaced with minimal /health endpoint.
+Build & test run (performed here):
+•	dotnet restore: succeeded (some package warnings noted)
+•	dotnet build: succeeded (with warnings)
+•	dotnet test: all tests passed in this run
+•	Test summary: total: 5, failed: 0, succeeded: 5, skipped: 0
+Warnings / notes / assumptions:
+•	NuGet warnings about some package advisories were emitted (no secrets added). These are informational from the feed; no secrets or credentials were added to source.
+•	For PasswordHasher<T> I added Microsoft.AspNetCore.Identity package (an available stable version) to enable hashing during seeding. PasswordHasher produces salted hashes; the seed logic hashes transient demo PINs at runtime and stores only the hash. The hash output may vary across runs because of random salt; the seeding operation remains idempotent with respect to logical records (it does not duplicate records) but hash bytes will differ if run repeatedly — the case study requested using PasswordHasher specifically; if deterministic identical hash bytes are strictly required, we should use a deterministic hashing approach (not recommended for PINs).
+•	Migrations were scaffolded as hand-authored artifacts in the repository to represent the intended initial schema (they were not executed against any remote/production database).
+•	Connection strings are not hardcoded. appsettings.json contains an empty ConnectionStrings:NovaBanking placeholder; real secrets must come from environment/user secrets per spec.
+•	Seeder uses Database.EnsureCreated() to create schema for development/demo only; it does not call EnsureDeleted() or run destructive operations.
+•	No authentication/service endpoints were implemented beyond removing sample code. Authentication, MCP, Semantic Kernel, RAG, AI and deployment are explicitly not implemented per instructions.
+Next phase (exact next step):
+•	Implement authentication/session module (PIN verification, session issuance and logout) and the server-side authorization gate (MCP toolkit integration) — this is Phase 3 per the case study.
+If you want, I can:
+•	Create a README note describing seeding instructions and demo PINs, or
+•	Generate a proper dotnet-ef migration via CLI (I prepared artifact but can run CLI to regenerate if you prefer),
+•	Or proceed to Phase 3 (authentication/session) next.
+Would you like me to proceed to authentication/session implementation now?
