@@ -1,0 +1,8 @@
+C:\Training\NovaAI>curl.exe -i -X POST [http://localhost:5146/api/auth/pin-login](http://localhost:5146/api/auth/pin-login)   -H "Content-Type: application/json"
+curl: (3) bad range in position 2:
+[http://localhost:5146/api/auth/pin-login](http://localhost:5146/api/auth/pin-login)
+ ^
+
+C:\Training\NovaAI>-d '{\"customerNumber\":\"CUST0001\",\"pin\":\"1111\"}'
+'-d' is not recognized as an internal or external command,
+operable program or batch file.
