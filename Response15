@@ -1,0 +1,90 @@
+Plan & implementation summary (PHASE 6 — MCP Banking Tools)
+I implemented an MCP layer inside the existing NovaBanking.McpServer project that exposes the requested read-only banking tools while preserving the existing authentication and ownership enforcement through server-side sessions (NB_SID cookie).
+What I inspected first
+•	NovaBanking.McpServer project and Program.cs
+•	Infrastructure extension AddNovaBankingInfrastructure (to register DbContext)
+•	IBankingService and BankingService implementation (already supports server-side ownership via ICurrentUserAccessor)
+•	CurrentUserService in API (used its logic as the model for MCP)
+•	Domain entities and DTOs to confirm data returned is safe and masked (e.g., MaskedCardNumber)
+What I added
+1.	MCP services & controller
+•	File: src/NovaBanking.McpServer/Services/CurrentUserAccessor.cs
+•	Implements NovaBanking.Application.Services.ICurrentUserAccessor
+•	Reads NB_SID from HttpContext.Request.Cookies, computes SHA256 Base64 token hash, matches CustomerSessions table, checks RevokedOn and ExpiresOn.
+•	Reuses the exact server-side session model used by the API, ensuring CustomerId is derived only from the authenticated session.
+•	File: src/NovaBanking.McpServer/Controllers/McpToolsController.cs
+•	Endpoint group: /mcp/Tools
+•	Tools implemented (read-only):
+•	GET /mcp/Tools/GetCustomerProfile
+•	GET /mcp/Tools/GetAccountSummary
+•	GET /mcp/Tools/GetAccountBalance/{accountId}
+•	GET /mcp/Tools/GetRecentTransactions/{accountId}/{count}
+•	GET /mcp/Tools/GetLoanSummary/{loanId}
+•	GET /mcp/Tools/GetCreditCardSummary/{cardId}
+•	Each tool:
+•	Is read-only
+•	Uses IBankingService (which enforces ownership via ICurrentUserAccessor)
+•	Returns structured DTOs from the application layer
+•	Returns safe errors (Unauthorized / NotFound / Problem). Internal error details are not exposed.
+•	Does not accept CustomerId as a parameter (customer identity comes from NB_SID session)
+2.	DI and program wiring
+•	File modified: src/NovaBanking.McpServer/Program.cs
+•	Added using NovaBanking.Infrastructure;
+•	Registered AddNovaBankingInfrastructure(builder.Configuration) to enable DbContext
+•	Registered Controllers and IHttpContextAccessor
+•	Registered ICurrentUserAccessor to NovaBanking.McpServer.Services.CurrentUserAccessor
+•	Registered IBankingService to NovaBanking.Infrastructure.Services.BankingService
+3.	Tests
+•	File: tests/NovaBanking.McpServer.Tests/McpToolsTests.cs
+•	Added focused unit/integration-style tests that exercise the MCP tool behavior via BankingService with an in-memory database and the new CurrentUserAccessor.
+•	Tests included:
+•	GetCustomerProfile works for an authenticated customer
+•	GetAccountSummary works for an authenticated customer
+•	GetAccountBalance works for an owned account
+•	GetRecentTransactions works for an owned account
+•	GetLoanSummary works for an owned loan
+•	GetCreditCardSummary works for an owned card
+•	Unauthenticated requests are rejected (service returns null/empty)
+•	Another customer's account cannot be accessed
+•	CustomerId cannot be supplied by LLM (ownership enforced)
+•	Tests use Microsoft.EntityFrameworkCore.InMemory provider and set Cookie header on DefaultHttpContext so Request.Cookies resolves.
+4.	Test project package
+•	File updated: tests/NovaBanking.McpServer.Tests/NovaBanking.McpServer.Tests.csproj
+•	Added Microsoft.EntityFrameworkCore.InMemory for the in-memory EF Core provider.
+Why this design is safe and meets requirements
+•	MCP tools call IBankingService (existing application layer). BankingService enforces ownership by calling ICurrentUserAccessor.GetCurrentCustomerIdAsync(); it performs resource checks against CustomerId derived from a server-side session. The MCP layer does not add or accept customer identity parameters; resource selectors (accountId, loanId, cardId) are accepted but ownership is enforced server-side.
+•	The MCP server does not query the database directly for LLM input; it calls the service layer which performs necessary checks and mapping to safe DTOs.
+•	Sensitive values are not exposed: session tokens are only used server-side, DTOs do not contain PINs or full card numbers.
+•	Error handling avoids leaking internal details (stack traces / SQL exceptions).
+Files created/modified
+•	Modified: src/NovaBanking.McpServer/Program.cs
+•	Created: src/NovaBanking.McpServer/Services/CurrentUserAccessor.cs
+•	Created: src/NovaBanking.McpServer/Controllers/McpToolsController.cs
+•	Created: tests/NovaBanking.McpServer.Tests/McpToolsTests.cs
+•	Modified: tests/NovaBanking.McpServer.Tests/NovaBanking.McpServer.Tests.csproj (added EF InMemory)
+How MCP obtains authenticated CustomerId
+•	The MCP server is an ASP.NET Core Web app that accepts requests (e.g., from a validated LLM runtime or other server). It reads the NB_SID cookie from the incoming request (IHttpContextAccessor.HttpContext.Request.Cookies). The CurrentUserAccessor hashes the raw token, looks up CustomerSessions in the database, validates expiry and revoked state, and returns session.CustomerId. This is the authoritative customer identity used by the BankingService.
+How ownership is enforced
+•	BankingService (existing) calls ICurrentUserAccessor.GetCurrentCustomerIdAsync() and filters or rejects resources if they do not belong to the authenticated customer. The MCP tools call BankingService methods only — ownership enforcement is preserved in the same place as the primary API.
+How MCP server is hosted
+•	NovaBanking.McpServer is a normal ASP.NET Core Web app (Program.cs). It hosts endpoints under /mcp/Tools for the MCP toolset. It shares the same infrastructure project for DbContext and uses the same session table and token hashing logic.
+Tests added
+•	tests/NovaBanking.McpServer.Tests/McpToolsTests.cs — covers the required cases and keeps tests deterministic via in-memory EF provider and seeded data.
+Build & test results
+•	dotnet build: succeeded
+•	dotnet test: succeeded — Test summary: total: 14, failed: 0, succeeded: 14
+Packages added
+•	Microsoft.EntityFrameworkCore.InMemory (tests only)
+Architectural limitations / notes
+•	This MCP server expects to receive the same NB_SID cookie used by the API. For native LLM integrations, the runtime calling the MCP endpoints must present an authenticated server-side session cookie (NB_SID) for the target customer. The MCP server relies on standard HTTP cookie transport and server-side session validation. If an external LLM runtime cannot securely provide the NB_SID cookie in requests, a secure bridge is required (for example, a server-side component that performs user authentication, obtains an NB_SID session, and calls MCP tools on behalf of authenticated users). Do not accept CustomerId in MCP requests to bypass authentication—this is enforced in code and tests.
+Commands I ran here
+•	dotnet build
+•	dotnet test --no-build
+Next steps you may want to perform locally
+•	Host NovaBanking.McpServer alongside NovaBanking.Api or separately, and call the MCP endpoints with an NB_SID cookie derived from a valid authenticated session (NB_SID).
+•	Integrate with the LLM runtime: ensure the runtime can present NB_SID securely when invoking MCP endpoints, or provide a server-side mediator that calls MCP tools after authenticating the human user.
+If you'd like I can:
+•	Add OpenAPI descriptions for each MCP tool (including the explicit text about read-only and ownership enforcement).
+•	Add authentication middleware that explicitly rejects unauthenticated requests with 401 on the MCP server (right now controllers rely on service returning null/empty and return Unauthorized in some cases).
+•	Wire the MCP server to the same launchSettings as API for local testing.
+Task complete.
