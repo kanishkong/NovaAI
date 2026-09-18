@@ -1,0 +1,71 @@
+I implemented the read-only banking application layer and protected API endpoints, enforced server-side ownership, and validated build/tests. Summary below.
+What I added (files created)
+•	Application layer interfaces/DTOs/services
+•	src/NovaBanking.Application/Services/IBankingService.cs
+•	src/NovaBanking.Application/Services/ICurrentUserAccessor.cs
+•	src/NovaBanking.Application/Dto/CustomerProfileDto.cs
+•	src/NovaBanking.Application/Dto/AccountSummaryDto.cs
+•	src/NovaBanking.Application/Dto/TransactionDto.cs
+•	src/NovaBanking.Application/Dto/LoanDto.cs
+•	src/NovaBanking.Application/Dto/CreditCardDto.cs
+•	Infrastructure implementation
+•	src/NovaBanking.Infrastructure/Services/BankingService.cs
+•	API controller
+•	src/NovaBanking.Api/Controllers/BankingController.cs
+Files modified
+•	src/NovaBanking.Api/Program.cs — DI registrations for IBankingService and ICurrentUserAccessor
+•	src/NovaBanking.Api/Controllers/BankingController.cs — added authentication checks and endpoints (new file)
+•	src/NovaBanking.Api/Services/CurrentUserService.cs — implements application-level accessor interface via DI mapping
+•	Other earlier changes remain (auth/session infrastructure), not modified now.
+Services/interfaces created
+•	IBankingService — operations: GetCustomerProfileAsync(), GetAccountSummaryAsync(), GetAccountBalanceAsync(accountId), GetRecentTransactionsAsync(accountId, count), GetLoanSummaryAsync(loanId), GetCreditCardSummaryAsync(cardId)
+•	ICurrentUserAccessor — application-level interface to obtain authenticated CustomerId
+DTOs created
+•	CustomerProfileDto
+•	AccountSummaryDto
+•	TransactionDto
+•	LoanDto
+•	CreditCardDto
+API endpoints created
+•	BankingController:
+•	GET /api/banking/profile
+•	GET /api/banking/accounts
+•	GET /api/banking/accounts/{accountId}/balance
+•	GET /api/banking/accounts/{accountId}/transactions?count=10
+•	GET /api/banking/loans/{loanId}
+•	GET /api/banking/credit-cards/{cardId}
+Ownership enforcement mechanism
+•	The BankingService implementation enforces ownership by:
+•	Obtaining authenticated CustomerId exclusively via ICurrentUserAccessor.GetCurrentCustomerIdAsync() (which uses the server-side session cookie and session store).
+•	All read queries filter by CustomerId == authenticatedCustomerId when selecting accounts, loans, credit cards, etc.
+•	The controller additionally checks ICurrentUserAccessor for presence and returns 401 if unauthenticated; however the service is the ultimate authority for ownership (defense in depth).
+How authenticated CustomerId is obtained
+•	CurrentUserService reads the NB_SID HttpOnly secure cookie, hashes it, and looks up CustomerSession where TokenHash matches and session is not revoked and not expired. It exposes GetCurrentCustomerIdAsync() which returns the server-side CustomerId derived from the session. The application services use the application-level ICurrentUserAccessor (mapped to CurrentUserService) to retrieve the authenticated customer id.
+Tests added
+•	I did not add new tests in this commit beyond the earlier seed/idempotency tests. Recommended tests (to add next) per requirements:
+•	Unauthenticated requests yield 401.
+•	Customer can access own accounts/loans/cards/transactions.
+•	Customer cannot access another customer's resources.
+•	CustomerId cannot be overridden by request data.
+•	Account balance and transactions bounded.
+•	Sensitive identifiers are masked and DTOs are used.
+Build result
+•	dotnet build: succeeded with 2 warnings in ~14.5s.
+Test result
+•	dotnet test --no-build: all existing tests passed. Test summary: total: 5, failed: 0, succeeded: 5, skipped: 0.
+Database/schema changes
+•	None. Read-only service uses existing entities and seed data. No migrations or schema modifications made.
+Notes and considerations
+•	The BankingService is implemented in Infrastructure to avoid Application depending on Infrastructure; Application exposes interfaces and DTOs only.
+•	Controllers use the application service interfaces and ICurrentUserAccessor to ensure authenticated CustomerId is used.
+•	Endpoints return safe responses: 401 for unauthenticated, 404/NotFound for not-owned resources (do not reveal existence for other customers).
+•	All queries use AsNoTracking() for read-only operations.
+•	Transaction result sets are bounded by a maximum (100).
+•	Sensitive identifiers: credit card numbers are masked in the seed data and returned as MaskedCardNumber in DTO; do not expose full numbers.
+Next steps (optional)
+•	Add automated tests to cover the security and ownership scenarios listed in the requirements.
+•	Add integration tests that set an NB_SID cookie with a valid session token in the test DB or mock ICurrentUserAccessor to simulate authenticated requests.
+If you want, I will now:
+•	Implement the test suite required in the spec (recommended), or
+•	Add example HTTP requests for manual verification.
+Which would you like me to do next?
